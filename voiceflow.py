@@ -209,3 +209,123 @@ def save_history(text: str):
     entry = {"ts": dt.datetime.now().isoformat(timespec="seconds"), "text": text}
     with HISTORY_PATH.open("a") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+# --------------------------------------------------------------------------- engine
+
+class Engine:
+    """Ties hotkey -> record -> transcribe -> paste together."""
+
+    def __init__(self, cfg: dict):
+        self.cfg = cfg
+        self.recorder = Recorder(cfg["sample_rate"], cfg["input_device"])
+        self.transcriber = Transcriber(cfg)
+        self.state = "loading"
+        self.last_text = ""
+        self._recording = False
+
+    def start(self):
+        self.transcriber.load_async()
+        threading.Thread(target=self._mark_ready, daemon=True).start()
+        self._start_hotkey_listener()
+
+    def _mark_ready(self):
+        self.transcriber.ready.wait()
+        if self.transcriber.load_error:
+            self.state = "error"
+            self.last_text = f"Model failed to load: {self.transcriber.load_error}"
+        elif self.state == "loading":
+            self.state = "idle"
+
+    # -- hotkey handling
+
+    def _start_hotkey_listener(self):
+        hk = self.cfg["hotkey"]
+        self._key = parse_key(hk["key"])
+        self._tap_interval = float(hk.get("double_tap_interval", 0.4))
+        self._last_tap = 0.0
+        if hk["mode"] == "double_tap":
+            listener = keyboard.Listener(on_press=self._on_press_double_tap)
+        else:
+            listener = keyboard.Listener(
+                on_press=self._on_press_hold, on_release=self._on_release_hold
+            )
+        listener.daemon = True
+        listener.start()
+
+    def _matches(self, key) -> bool:
+        if key == self._key:
+            return True
+        # character keys arrive as KeyCode; compare canonical char
+        return (
+            isinstance(key, keyboard.KeyCode)
+            and isinstance(self._key, keyboard.KeyCode)
+            and key.char is not None
+            and key.char.lower() == self._key.char
+        )
+
+    def _on_press_hold(self, key):
+        if self._matches(key) and not self._recording:
+            self._begin()
+
+    def _on_release_hold(self, key):
+        if self._matches(key) and self._recording:
+            self._finish()
+
+    def _on_press_double_tap(self, key):
+        if not self._matches(key):
+            return
+        now = time.monotonic()
+        if now - self._last_tap <= self._tap_interval:
+            self._last_tap = 0.0
+            if self._recording:
+                self._finish()
+            else:
+                self._begin()
+        else:
+            self._last_tap = now
+
+    # -- record / process
+
+    def _begin(self):
+        if self.state == "transcribing":
+            return
+        try:
+            self.recorder.start()
+        except Exception as e:
+            self.state = "error"
+            self.last_text = f"Mic error: {e} (check Microphone permission)"
+            return
+        self._recording = True
+        self.state = "recording"
+
+    def _finish(self):
+        self._recording = False
+        audio = self.recorder.stop()
+        self.state = "transcribing"
+        threading.Thread(target=self._process, args=(audio,), daemon=True).start()
+
+    def _process(self, audio: np.ndarray):
+        try:
+            duration = len(audio) / self.cfg["sample_rate"]
+            if duration < self.cfg["min_duration_sec"] or np.abs(audio).max() < 1e-4:
+                return  # accidental tap or silence
+            self.transcriber.ready.wait(timeout=300)
+            if self.transcriber.load_error:
+                return
+            text = clean_text(self.transcriber.transcribe(audio))
+            if not text:
+                return
+            if self.cfg["trailing_space"]:
+                text += " "
+            insert_text(text, self.cfg)
+            self.last_text = text.strip()
+            if self.cfg["save_history"]:
+                save_history(text.strip())
+        except Exception as e:
+            self.state = "error"
+            self.last_text = f"Error: {e}"
+            return
+        finally:
+            if self.state != "error":
+                self.state = "idle"
