@@ -87,3 +87,46 @@ def parse_key(name: str):
     except KeyError:
         valid = ", ".join(k.name for k in keyboard.Key)
         sys.exit(f"[{APP_NAME}] Unknown hotkey '{name}'. Use a single character or one of: {valid}")
+
+
+# --------------------------------------------------------------------------- audio
+
+class Recorder:
+    """Captures mono float32 audio from the mic into memory (never touches disk)."""
+
+    def __init__(self, sample_rate: int, device):
+        self.sample_rate = sample_rate
+        self.device = device
+        self._frames = []
+        self._stream = None
+        self._lock = threading.Lock()
+
+    def start(self):
+        with self._lock:
+            if self._stream is not None:
+                return
+            self._frames = []
+            self._stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype="float32",
+                device=self.device,
+                callback=self._callback,
+            )
+            self._stream.start()
+
+    def _callback(self, indata, frames, time_info, status):
+        self._frames.append(indata.copy())
+
+    def stop(self) -> np.ndarray:
+        with self._lock:
+            if self._stream is None:
+                return np.zeros(0, dtype=np.float32)
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
+            if not self._frames:
+                return np.zeros(0, dtype=np.float32)
+            audio = np.concatenate(self._frames)[:, 0]
+            self._frames = []
+            return audio
