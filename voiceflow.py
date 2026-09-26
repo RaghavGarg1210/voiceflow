@@ -176,3 +176,36 @@ def clean_text(text: str) -> str:
     if text and text[0].islower():
         text = text[0].upper() + text[1:]
     return text
+
+
+# --------------------------------------------------------------------------- output
+
+def _pbcopy(data: bytes):
+    subprocess.run(["pbcopy"], input=data, check=False)
+
+
+def _pbpaste() -> bytes:
+    return subprocess.run(["pbpaste"], capture_output=True, check=False).stdout
+
+
+def insert_text(text: str, cfg: dict):
+    """Deliver the transcript into the currently focused text field."""
+    kb = keyboard.Controller()
+    if cfg["output_mode"] == "type":
+        kb.type(text)
+        return
+    previous = _pbpaste() if cfg["restore_clipboard"] else None
+    _pbcopy(text.encode("utf-8"))
+    time.sleep(0.05)  # let the pasteboard settle before the keystroke
+    with kb.pressed(keyboard.Key.cmd):
+        kb.press("v")
+        kb.release("v")
+    if previous is not None:
+        time.sleep(cfg["clipboard_restore_delay"])
+        _pbcopy(previous)
+
+
+def save_history(text: str):
+    entry = {"ts": dt.datetime.now().isoformat(timespec="seconds"), "text": text}
+    with HISTORY_PATH.open("a") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
