@@ -130,3 +130,49 @@ class Recorder:
             audio = np.concatenate(self._frames)[:, 0]
             self._frames = []
             return audio
+
+
+# --------------------------------------------------------------------------- transcription
+
+class Transcriber:
+    """Local Whisper via faster-whisper (CTranslate2). Loaded once, reused."""
+
+    def __init__(self, cfg: dict):
+        self.cfg = cfg
+        self._model = None
+        self.ready = threading.Event()
+        self.load_error = None
+
+    def load_async(self):
+        threading.Thread(target=self._load, daemon=True).start()
+
+    def _load(self):
+        try:
+            from faster_whisper import WhisperModel
+            self._model = WhisperModel(
+                self.cfg["model"],
+                device="cpu",
+                compute_type=self.cfg["compute_type"],
+            )
+        except Exception as e:  # surface load failures in the menu bar
+            self.load_error = str(e)
+        finally:
+            self.ready.set()
+
+    def transcribe(self, audio: np.ndarray) -> str:
+        segments, _info = self._model.transcribe(
+            audio,
+            language=self.cfg["language"],
+            beam_size=1,
+            vad_filter=True,
+            condition_on_previous_text=False,
+        )
+        return " ".join(seg.text.strip() for seg in segments)
+
+
+def clean_text(text: str) -> str:
+    """Whisper already punctuates; just normalize whitespace and casing."""
+    text = " ".join(text.split()).strip()
+    if text and text[0].islower():
+        text = text[0].upper() + text[1:]
+    return text
