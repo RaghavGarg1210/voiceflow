@@ -329,3 +329,86 @@ class Engine:
         finally:
             if self.state != "error":
                 self.state = "idle"
+
+
+# --------------------------------------------------------------------------- menu bar UI
+
+class VoiceFlowApp(rumps.App):
+    def __init__(self, engine: Engine, cfg: dict):
+        super().__init__(STATE_ICONS["loading"], quit_button="Quit VoiceFlow")
+        self.engine = engine
+        hk = cfg["hotkey"]
+        trigger = (
+            f"hold {hk['key']}" if hk["mode"] == "hold" else f"double-tap {hk['key']}"
+        )
+        self.status_item = rumps.MenuItem(f"Loading {cfg['model']} model…")
+        self.last_item = rumps.MenuItem("Last: —")
+        self.menu = [
+            self.status_item,
+            self.last_item,
+            None,
+            rumps.MenuItem(f"Trigger: {trigger}"),
+            rumps.MenuItem("Open History", callback=self._open_history),
+            rumps.MenuItem("Open Config", callback=self._open_config),
+            None,
+        ]
+        rumps.Timer(self._tick, 0.15).start()
+
+    def _tick(self, _timer):
+        state = self.engine.state
+        self.title = STATE_ICONS.get(state, "🎤")
+        labels = {
+            "loading": "Loading model…",
+            "idle": "Ready — press your hotkey to dictate",
+            "recording": "Recording… (release / tap to stop)",
+            "transcribing": "Transcribing…",
+            "error": "Error — see below",
+        }
+        self.status_item.title = labels.get(state, state)
+        if self.engine.last_text:
+            preview = self.engine.last_text
+            if len(preview) > 60:
+                preview = preview[:57] + "…"
+            self.last_item.title = f"Last: {preview}"
+
+    def _open_history(self, _):
+        HISTORY_PATH.touch(exist_ok=True)
+        subprocess.run(["open", str(HISTORY_PATH)], check=False)
+
+    def _open_config(self, _):
+        subprocess.run(["open", str(CONFIG_PATH)], check=False)
+
+
+# --------------------------------------------------------------------------- entry point
+
+def main():
+    parser = argparse.ArgumentParser(description="VoiceFlow — local push-to-talk dictation")
+    parser.add_argument("--list-devices", action="store_true", help="list audio input devices and exit")
+    parser.add_argument("--check", action="store_true", help="validate config and dependencies, then exit")
+    args = parser.parse_args()
+
+    if args.list_devices:
+        print(sd.query_devices())
+        return
+
+    cfg = load_config()
+
+    if args.check:
+        parse_key(cfg["hotkey"]["key"])
+        import faster_whisper  # noqa: F401
+        print(f"[{APP_NAME}] OK — config valid, dependencies importable.")
+        print(f"  config:  {CONFIG_PATH}")
+        print(f"  hotkey:  {cfg['hotkey']['mode']} {cfg['hotkey']['key']}")
+        print(f"  model:   {cfg['model']} ({cfg['compute_type']})")
+        return
+
+    if sys.platform != "darwin":
+        sys.exit(f"[{APP_NAME}] This build targets macOS (uses rumps + pbcopy + Cmd+V).")
+
+    engine = Engine(cfg)
+    engine.start()
+    VoiceFlowApp(engine, cfg).run()
+
+
+if __name__ == "__main__":
+    main()
