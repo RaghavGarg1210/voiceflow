@@ -55,6 +55,14 @@ Open **System Settings → Privacy & Security**, then:
 
 The menu-bar dropdown shows status, your last transcript, and shortcuts to open the history file and config.
 
+### Hindi → English
+
+**Hold the *left* Option (⌥) key**, speak in Hindi (mixing in English words is fine), release — the **English translation** is pasted at your cursor. The menu bar shows 🟠 while recording in this mode.
+
+This uses Whisper's built-in translate task, so it stays 100% local. The first time you use it, the multilingual `small` model (~460 MB) is downloaded and loaded — that first dictation takes noticeably longer; after that it's instant. Note that keeping both models loaded uses more RAM (~1 GB total).
+
+Disable it or tweak the key/model via the `translate` block in the config (below).
+
 ## 4. Configure
 
 Edit `~/.voiceflow/config.json` (menu bar → **Open Config**), then restart the app.
@@ -70,6 +78,10 @@ Edit `~/.voiceflow/config.json` (menu bar → **Open Config**), then restart the
 | `output_mode` | `"paste"` | `"paste"` (Cmd+V — fast, handles long text) or `"type"` (per-keystroke; use if an app blocks paste) |
 | `restore_clipboard` | `true` | Puts your previous clipboard *text* back ~0.6 s after pasting (images/rich content aren't preserved) |
 | `save_history` | `true` | Set `false` to keep no record at all |
+| `translate.enabled` | `true` | Set `false` to turn off the Hindi → English hotkey entirely |
+| `translate.key` | `"alt_l"` | Left Option. Uses the same `hotkey.mode` (hold / double-tap) as the main key |
+| `translate.model` | `"small"` | Must be a multilingual model (no `.en` suffix). `"medium"` translates better but is slower and ~1.5 GB |
+| `translate.language` | `"hi"` | Source language. Set another Whisper code (e.g. `"es"`) to translate a different language to English |
 
 **Example — double-tap Left Control instead of holding Option:**
 
