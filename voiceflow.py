@@ -113,14 +113,24 @@ class Recorder:
             if self._stream is not None:
                 return
             self._frames = []
-            self._stream = sd.InputStream(
+            stream = sd.InputStream(
                 samplerate=self.sample_rate,
                 channels=1,
                 dtype="float32",
                 device=self.device,
                 callback=self._callback,
             )
-            self._stream.start()
+            try:
+                stream.start()
+            except Exception:
+                # A failed stream must not block the next recording attempt.
+                try:
+                    stream.close()
+                except Exception:
+                    pass  # keep the original microphone error
+                self._frames = []
+                raise
+            self._stream = stream
 
     def _callback(self, indata, frames, time_info, status):
         self._frames.append(indata.copy())

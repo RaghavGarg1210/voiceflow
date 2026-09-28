@@ -4,9 +4,9 @@ Lightweight, private, push-to-talk dictation for macOS — a local Whisper Flow.
 
 **Hold the right Option key → speak → release.** Your words are transcribed on-device and pasted straight into whatever app has focus (Slack, Gmail, Google Docs, your editor...).
 
-- **100% local.** Audio is captured in memory and transcribed with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) on your Mac. Nothing is uploaded, ever. The only network access is a one-time model download on first launch.
+- **On-device transcription.** Audio is captured in memory and transcribed with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) on your Mac. VoiceFlow does not upload recordings to a transcription service. Model downloads require internet access; a newly selected model may need another download.
 - **No bloat.** The entire UI is a single menu-bar icon: 🎤 idle · 🔴 recording · ✍️ transcribing.
-- **Everything stays in `~/.voiceflow/`** — settings (`config.json`) and transcript history (`history.jsonl`).
+- **Settings and history stay in `~/.voiceflow/`** — `config.json` and `history.jsonl`. Downloaded models use the Hugging Face cache separately.
 
 ---
 
@@ -15,12 +15,20 @@ Lightweight, private, push-to-talk dictation for macOS — a local Whisper Flow.
 Requires macOS and Python 3.10+ (check with `python3 --version`; `brew install python` if needed).
 
 ```bash
+git clone https://github.com/RaghavGarg1210/voiceflow.git
 cd voiceflow
 chmod +x run.sh
 ./run.sh --check
 ```
 
-The first run creates a virtualenv, installs dependencies, and validates the setup. You should see `OK — config valid, dependencies importable.`
+The first run creates a virtualenv, installs dependencies, and checks the configured hotkey names and dependency imports. You should see `OK — config valid, dependencies importable.` This check does not download a model, open the microphone, verify macOS permissions, or validate every configuration value.
+
+If a previous installation was interrupted, repair the environment with:
+
+```bash
+.venv/bin/python -m pip install -r requirements.txt
+./run.sh --check
+```
 
 Then start the app:
 
@@ -28,7 +36,7 @@ Then start the app:
 ./run.sh
 ```
 
-On first launch, faster-whisper downloads the `base.en` model (~140 MB) to `~/.cache/huggingface/`. The menu-bar icon shows ⏳ while loading, then 🎤 when ready. Every launch after that is fully offline.
+On first launch, faster-whisper downloads the `base.en` model (~140 MB) to `~/.cache/huggingface/`. The menu-bar icon shows ⏳ while loading, then 🎤 when ready. Once the selected models are cached, transcription runs locally; changing models may require another download.
 
 ## 2. Grant permissions (one-time)
 
@@ -59,7 +67,7 @@ The menu-bar dropdown shows status, your last transcript, and shortcuts to open 
 
 **Hold the *left* Option (⌥) key**, speak in Hindi (mixing in English words is fine), release — the **English translation** is pasted at your cursor. The menu bar shows 🟠 while recording in this mode.
 
-This uses Whisper's built-in translate task, so it stays 100% local. The first time you use it, the multilingual `small` model (~460 MB) is downloaded and loaded — that first dictation takes noticeably longer; after that it's instant. Note that keeping both models loaded uses more RAM (~1 GB total).
+This uses Whisper's built-in translate task, so it stays 100% local. The first time you use it, the multilingual `small` model (~460 MB) is downloaded and loaded — that first dictation takes noticeably longer; later translations avoid that initial download, but processing time still depends on your Mac and recording length. Note that keeping both models loaded uses more RAM (~1 GB total).
 
 Disable it or tweak the key/model via the `translate` block in the config (below).
 
@@ -77,7 +85,7 @@ Edit `~/.voiceflow/config.json` (menu bar → **Open Config**), then restart the
 | `input_device` | `null` | System default mic. Run `./run.sh --list-devices` and set the device index to pick another |
 | `output_mode` | `"paste"` | `"paste"` (Cmd+V — fast, handles long text) or `"type"` (per-keystroke; use if an app blocks paste) |
 | `restore_clipboard` | `true` | Puts your previous clipboard *text* back ~0.6 s after pasting (images/rich content aren't preserved) |
-| `save_history` | `true` | Set `false` to keep no record at all |
+| `save_history` | `true` | Set `false` to stop saving new transcripts; existing history is kept |
 | `translate.enabled` | `true` | Set `false` to turn off the Hindi → English hotkey entirely |
 | `translate.key` | `"alt_l"` | Left Option. Uses the same `hotkey.mode` (hold / double-tap) as the main key |
 | `translate.model` | `"small"` | Must be a multilingual model (no `.en` suffix). `"medium"` translates better but is slower and ~1.5 GB |
@@ -86,8 +94,22 @@ Edit `~/.voiceflow/config.json` (menu bar → **Open Config**), then restart the
 **Example — double-tap Left Control instead of holding Option:**
 
 ```json
-"hotkey": { "mode": "double_tap", "key": "ctrl_l", "double_tap_interval": 0.4 }
+{
+  "hotkey": {
+    "mode": "double_tap",
+    "key": "ctrl_l",
+    "double_tap_interval": 0.4
+  }
+}
 ```
+
+The example is a complete JSON file. Merge its `hotkey` block into your existing settings to keep other custom values. Missing settings use the defaults.
+
+### Privacy and history
+
+Audio stays in memory. Transcripts are saved as **plain text** in `~/.voiceflow/history.jsonl` by default. Set `"save_history": false` and restart to stop saving future transcripts; existing history remains until you delete it. The menu still shows the last transcript during the session.
+
+Paste mode puts text on the system clipboard, then restores the previous clipboard text when enabled. It does not preserve images or rich formatting. Clipboard managers and the destination app may retain or sync pasted text under their own settings.
 
 ## 5. Optional: start at login
 
@@ -112,7 +134,19 @@ Replace `REPLACE_WITH_PATH` with this folder's absolute path, then `launchctl lo
 |---|---|
 | Hotkey does nothing | Grant **Input Monitoring** to your terminal app, restart both |
 | 🔴 appears but no text is pasted | Grant **Accessibility**, restart both |
-| ⚠️ with "Mic error" | Grant **Microphone**; check the mic works in System Settings → Sound → Input |
+| ⚠️ with "Mic error" | Grant **Microphone**; check System Settings → Sound → Input and `./run.sh --list-devices`. After reconnecting a mic, try the hotkey again; restart after changing permissions or config. |
 | Transcription is slow | Switch `model` to `"tiny.en"`, or keep `compute_type: "int8"` |
 | Wrong words / accents | Upgrade `model` to `"small.en"` (one-time ~460 MB download) |
 | Paste blocked by an app | Set `output_mode` to `"type"` |
+
+## Development
+
+Run the focused recorder tests after installing dependencies:
+
+```bash
+.venv/bin/python -m unittest discover -v
+```
+
+These tests simulate audio streams and cover failed startup, retry, and normal recording cleanup. They do not access your microphone, listen for keys, or download models.
+
+For a manual smoke test, run `./run.sh --check`, start `./run.sh`, and dictate a short sentence into a scratch text field. Check both Option keys if translation is enabled. Microphone permissions, model loading, and pasting into another app require this manual check.
